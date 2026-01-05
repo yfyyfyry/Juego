@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Bio-Defensa: 100 Niveles + Música</title>
+<style>
+    :root { --ui: rgba(10, 10, 10, 0.95); --accent: #4CAF50; }
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Arial Black', sans-serif; touch-action: none; }
+    canvas { display: block; }
+
+    .screen { position: absolute; inset: 0; z-index: 100; background: linear-gradient(#1a4a1c, #0d0d0d); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    
+    #seed-selection { position: absolute; inset: 0; background: rgba(0,0,0,0.95); z-index: 200; display: none; flex-direction: column; align-items: center; padding: 20px; color: white; overflow-y: auto; }
+    .seed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 10px; width: 90%; margin: 20px 0; }
+    .seed-card { width: 70px; height: 90px; background: #333; border: 2px solid #666; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; }
+    .seed-card.selected { border-color: var(--accent); background: #1a3a1a; box-shadow: 0 0 15px var(--accent); transform: scale(1.05); }
+
+    #hud { position: absolute; top: 0; width: 100%; height: 65px; background: var(--ui); display: none; align-items: center; justify-content: space-around; color: white; z-index: 10; border-bottom: 3px solid var(--accent); }
+    #inventory { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; background: var(--ui); padding: 12px; border-radius: 15px; z-index: 10; border: 1px solid #444; overflow-x: auto; max-width: 95vw; }
+    
+    .card { width: 58px; height: 78px; background: #eee; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 3px solid #555; color: #000; font-size: 11px; font-weight: bold; flex-shrink: 0; }
+    .card.active { border-color: var(--accent); transform: scale(1.1) translateY(-5px); background: #fff; }
+    
+    .btn { padding: 18px 50px; font-size: 22px; background: var(--accent); color: white; border: none; border-radius: 50px; cursor: pointer; box-shadow: 0 6px #2e7d32; transition: 0.1s; text-transform: uppercase; }
+    .btn:active { box-shadow: 0 2px #2e7d32; transform: translateY(4px); }
+
+    #shovelBtn { position: absolute; bottom: 110px; right: 16px; z-index: 50; background: var(--accent); border-radius: 12px; padding: 10px 14px; font-size: 16px; color: white; border: none; box-shadow: 0 4px rgba(0,0,0,0.2); }
+    #shovelBtn.active { background: #c62828; }
+</style>
+</head>
+<body>
+
+<div id="menu" class="screen">
+    <h1 style="font-size: 50px; margin: 0; text-shadow: 3px 3px #000;">BIO-DEFENSA</h1>
+    <p style="color: #8bc34a; letter-spacing: 2px;">MODO 100 NIVELES</p>
+    <button class="btn" onclick="checkLevelStart()">JUGAR NIVEL <span id="btn-lvl">1</span></button>
+    <button style="background:none; color:#555; border:none; margin-top:40px; font-size:12px;" onclick="resetSave()">Borrar Progreso</button>
+</div>
+
+<div id="seed-selection">
+    <h2 style="color:var(--accent)">ESCOGE 6 SEMILLAS</h2>
+    <div id="available-seeds" class="seed-grid"></div>
+    <button class="btn" onclick="confirmSeeds()">EMPEZAR BATALLA</button>
+</div>
+
+<div id="hud">
+    <div style="color: #ffd700; font-size: 26px; font-weight: bold; text-shadow: 1px 1px #000;">☀️ <span id="sun-val">100</span></div>
+    <div id="lvl-val" style="font-size: 18px;">NIVEL 1</div>
+    <div style="width:120px; height:15px; background:#222; border-radius:10px; border:2px solid #444; overflow:hidden;">
+        <div id="bar" style="width:0; height:100%; background:linear-gradient(90deg, #4CAF50, #8bc34a);"></div>
+    </div>
+</div>
+
+<button id="shovelBtn" title="Pala (quitar plantas)">🪓</button>
+
+<div id="inventory"></div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+/** 100 PLANTAS **/
+const ALL_PLANTS = [
+    { id: 'sunflower', icon: '🌻', cost: 50, hp: 100 },
+    { id: 'peashooter', icon: '🌿', cost: 100, hp: 120 },
+    { id: 'wallnut', icon: '🥔', cost: 50, hp: 1200 },
+    { id: 'repeater', icon: '🌿🌿', cost: 200, hp: 120 },
+    { id: 'icepea', icon: '❄️', cost: 175, hp: 120 },
+    { id: 'firepea', icon: '🔥', cost: 175, hp: 150 },
+    { id: 'cherry', icon: '🍒', cost: 150, hp: 100 },
+    { id: 'cactus', icon: '🌵', cost: 125, hp: 150 },
+    { id: 'star', icon: '⭐', cost: 125, hp: 120 },
+    { id: 'melon', icon: '🍉', cost: 300, hp: 150 }
+];
+// Rellenar resto hasta 100
+for(let i=11; i<=100; i++) ALL_PLANTS.push({ id:'p'+i, icon:'🧬', cost:100+(i*5), hp:150+(i*10) });
+
+/** MOTOR DE AUDIO **/
+const ctxA = new (window.AudioContext || window.webkitAudioContext)();
+let musicInterval;
+
+function sfx(f, t, d, v=0.05) {
+    const o = ctxA.createOscillator(), g = ctxA.createGain();
+    o.type = t; o.frequency.value = f;
+    g.gain.setValueAtTime(v, ctxA.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, ctxA.currentTime+d);
+    o.connect(g); g.connect(ctxA.destination);
+    o.start(); o.stop(ctxA.currentTime+d);
+}
+
+function startMusic() {
+    if(musicInterval) clearInterval(musicInterval);
+    musicInterval = setInterval(() => {
+        if(!active) return;
+        sfx(80, 'triangle', 0.3, 0.03); 
+        if(frame % 2 === 0) sfx(120, 'square', 0.1, 0.01);
+        if(Math.random() > 0.8) sfx(440 + (Math.random()*200), 'sine', 0.5, 0.02);
+    }, 500);
+}
+
+/** LÓGICA DE JUEGO **/
+let level = parseInt(localStorage.getItem('pvz_100_lvl')) || 1;
+let suns = 150, active = false, frame = 0, limit = 3000;
+let plants = [], zombies = [], bullets = [], sunsOnFloor = [], chosenSeeds = [];
+let sel = null, cost = 0;
+let shovelMode = false; // <- pala: true cuando está seleccionada
+
+/* ====== Minijuego / jefes ====== */
+let miniGameLevel5 = false;
+const BOSS_LEVELS = [10, 20, 100];
+let boss = null;
+let bossActive = false;
+/* ================================= */
+
+function updateAvailableSeeds() {
+  if (level >= 10) return;
+  chosenSeeds = ALL_PLANTS.slice(0, Math.min(level + 1, 6));
+  const btn = document.getElementById('btn-lvl');
+  if (btn) btn.innerText = level;
+}
+updateAvailableSeeds();
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let cellSize, topMargin = 75;
+document.getElementById('btn-lvl').innerText = level;
+
+/* BOTÓN PALA RÁPIDO */
+const shovelBtn = document.getElementById('shovelBtn');
+shovelBtn.onclick = () => {
+    shovelMode = !shovelMode;
+    sel = null;
+    shovelBtn.classList.toggle('active', shovelMode);
+    document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+};
+
+function resetSave() { localStorage.clear(); location.reload(); }
+
+function checkLevelStart() {
+    if(level >= 10) {
+        showSeedSelection();
+    } else {
+        updateAvailableSeeds();
+        start();
+    }
+}
+
+function showSeedSelection() {
+    document.getElementById('menu').style.display = 'none';
+    document.getElementById('seed-selection').style.display = 'flex';
+    const container = document.getElementById('available-seeds');
+    container.innerHTML = "";
+    chosenSeeds = [];
+    
+    ALL_PLANTS.slice(0, Math.min(level + 5, 100)).forEach(p => {
+        let div = document.createElement('div');
+        div.className = 'seed-card';
+        div.innerHTML = `<span style="font-size:30px">${p.icon}</span><small>${p.cost}</small>`;
+        div.onclick = () => {
+            if(chosenSeeds.includes(p)) {
+                chosenSeeds = chosenSeeds.filter(s => s !== p);
+                div.classList.remove('selected');
+            } else if(chosenSeeds.length < 6) {
+                chosenSeeds.push(p);
+                div.classList.add('selected');
+            }
+        };
+        container.appendChild(div);
+    });
+}
+
+function confirmSeeds() {
+    if(chosenSeeds.length === 0) return alert("¡Elige al menos una planta!");
+    document.getElementById('seed-selection').style.display = 'none';
+    start();
+}
+
+function start() {
+    document.getElementById('menu').style.display = 'none';
+    document.getElementById('hud').style.display = 'flex';
+    document.getElementById('inventory').style.display = 'flex';
+    if(ctxA.state === 'suspended') ctxA.resume();
+    
+    if (level < 10 && (!chosenSeeds || chosenSeeds.length === 0)) {
+        updateAvailableSeeds();
+    }
+    const btnLvlEl = document.getElementById('btn-lvl');
+    if (btnLvlEl) btnLvlEl.innerText = level;
+
+    /* MINI-JUEGO FLAG */
+    miniGameLevel5 = (level === 5);
+    bossActive = false;
+    boss = null;
+
+    /* ===== IMPORTANTE: asignar soles ANTES de crear inventario ===== */
+    suns = miniGameLevel5 ? 50 : 150; // <-- moved here so inventory onclick sees correct suns
+    frame = 0;
+    plants = []; zombies = []; bullets = []; sunsOnFloor = [];
+    limit = 2000 + (level * 500);
+
+    const inv = document.getElementById('inventory');
+    inv.innerHTML = "";
+
+    // 🪓 PALA en inventario
+    let shovel = document.createElement('div');
+    shovel.className = 'card';
+    shovel.innerHTML = `<span style="font-size:24px">🪓</span><small>QUITAR</small>`;
+    shovel.onclick = () => {
+        sel = null;
+        shovelMode = true;
+        document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+        shovel.classList.add('active');
+        shovelBtn.classList.add('active');
+    };
+    inv.appendChild(shovel);
+
+    // Semillas disponibles
+    chosenSeeds.forEach(p => {
+        let div = document.createElement('div');
+        div.className = 'card';
+        div.innerHTML = `<span style="font-size:24px">${p.icon}</span><small>${p.cost}</small>`;
+        div.onclick = () => {
+            if(suns >= p.cost) {
+                sel = p.id; cost = p.cost;
+                shovelMode = false;
+                shovelBtn.classList.remove('active');
+                document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+                div.classList.add('active');
+            } else {
+                // feedback si no hay soles suficientes
+                sfx(200, 'sine', 0.08, 0.04);
+            }
+        };
+        inv.appendChild(div);
+    });
+
+    startMusic();
+    active = true;
+    loop();
+}
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    cellSize = canvas.width / 9;
+}
+window.onresize = resize;
+resize();
+
+/* Zombie y Boss clases (sin cambios lógicos importantes) */
+class Zombie {
+    constructor(row, isBoss = false) {
+        this.gy = row; this.x = canvas.width;
+        this.y = row * cellSize + topMargin;
+        if(isBoss) {
+            this.hp = 1000; this.maxHp = this.hp; this.speed = 0.08;
+        } else {
+            if (miniGameLevel5 || BOSS_LEVELS.includes(level)) {
+                this.hp = 160 + (level * 80);
+                this.speed = 0.12 + (level * 0.002);
+            } else {
+                this.hp = 80 + (level * 50);
+                this.speed = 0.18 + (level * 0.004);
+            }
+            this.maxHp = this.hp;
+        }
+        this.isBoss = isBoss;
+    }
+    update() {
+        let p = plants.find(p => p.gy === this.gy && Math.abs(this.x - p.x) < 30);
+        if(p) { 
+            p.hp -= 1.5; 
+            if(frame % 30 === 0) sfx(120, 'square', 0.1, 0.02);
+        } else { 
+            this.x -= this.speed; 
+        }
+        if(this.x < -cellSize) { alert("¡LOS ZOMBIS COMIERON TU CEREBRO!"); location.reload(); }
+    }
+    draw() {
+        ctx.font = `${cellSize*0.7}px Arial`;
+        ctx.fillText(this.isBoss ? '👾' : '🧟', this.x + cellSize/2, this.y + cellSize/1.4);
+        ctx.fillStyle = "#f00";
+        ctx.fillRect(this.x + 20, this.y + 5, (this.hp/this.maxHp)*40, 5);
+    }
+}
+
+class Boss {
+    constructor() {
+        this.gy = 2;
+        this.x = canvas.width;
+        this.y = this.gy * cellSize + topMargin;
+        this.hp = 2500 + (level * 800);
+        this.maxHp = this.hp;
+        this.speed = 0.06;
+        this.spawned = Date.now();
+    }
+    update() {
+        let p = plants.find(p => p.gy === this.gy && Math.abs(this.x - p.x) < 40);
+        if(p) p.hp -= 2.5;
+        else this.x -= this.speed;
+        if(this.x < -cellSize) { alert("¡EL JEFE TE COMIÓ!"); location.reload(); }
+    }
+    draw() {
+        ctx.font = `${cellSize*1.2}px Arial`;
+        ctx.fillText('👑', this.x + cellSize/2, this.y + cellSize/1.2);
+        let barW = Math.min(canvas.width * 0.6, 400);
+        let bx = (canvas.width - barW) / 2;
+        ctx.fillStyle = '#222'; ctx.fillRect(bx, 10, barW, 12);
+        ctx.fillStyle = '#f00'; ctx.fillRect(bx, 10, (this.hp / this.maxHp) * barW, 12);
+        ctx.fillStyle = '#fff'; ctx.font = '12px Arial';
+        ctx.fillText(`Jefe - HP: ${Math.floor(this.hp)}`, bx + 6, 20);
+    }
+}
+
+function spawnSun() {
+    sunsOnFloor.push({x: Math.random()*(canvas.width-60)+30, y:0, ty: Math.random()*300+250});
+}
+
+canvas.addEventListener('touchstart', (e) => {
+    let t = e.touches[0];
+    // recoger sol
+    for(let i=sunsOnFloor.length-1; i>=0; i--) {
+        let s = sunsOnFloor[i];
+        if(Math.hypot(t.clientX - s.x, t.clientY - s.y) < 60) {
+            suns+=25; sunsOnFloor.splice(i,1); sfx(800, 'sine', 0.1); return;
+        }
+    }
+
+    // quitar planta con pala
+    if(shovelMode) {
+        let gx = Math.floor(t.clientX / cellSize);
+        let gy = Math.floor((t.clientY - topMargin) / cellSize);
+        for(let i = plants.length - 1; i >= 0; i--) {
+            if(plants[i].gx === gx && plants[i].gy === gy) {
+                plants.splice(i, 1);
+                sfx(150, 'square', 0.1, 0.03);
+                break;
+            }
+        }
+        shovelMode = false;
+        shovelBtn.classList.remove('active');
+        document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+        return;
+    }
+
+    // plantar
+    if(sel) {
+        let gx = Math.floor(t.clientX/cellSize), gy = Math.floor((t.clientY-topMargin)/cellSize);
+        let allowed = level === 1 ? [2] : (level === 2 ? [1,2,3] : [0,1,2,3,4]);
+        if(allowed.includes(gy) && !plants.some(p=>p.gx===gx && p.gy===gy)) {
+            let pData = ALL_PLANTS.find(p => p.id === sel);
+            plants.push({ gx, gy, x: gx*cellSize, y: gy*cellSize+topMargin, ...pData, t:0 });
+            suns -= cost; sel = null;
+            document.querySelectorAll('.card').forEach(c=>c.classList.remove('active'));
+            sfx(200, 'triangle', 0.2);
+        }
+    }
+});
+
+function loop() {
+    if(!active) return;
+    ctx.clearRect(0,0,canvas.width, canvas.height);
+
+    // dibujar jardin
+    let allowed = level === 1 ? [2] : (level === 2 ? [1,2,3] : [0,1,2,3,4]);
+    for(let i=0; i<5; i++) {
+        ctx.fillStyle = allowed.includes(i) ? (i%2===0 ? '#2d6a2e' : '#357a38') : '#111';
+        ctx.fillRect(0, i*cellSize+topMargin, canvas.width, cellSize);
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+        ctx.strokeRect(0, i*cellSize+topMargin, canvas.width, cellSize);
+    }
+
+    // soles (no en nivel5 minijuego)
+    if(!miniGameLevel5 && frame % 300 === 0) spawnSun();
+
+    // spawn de zombis / jefes
+    if (BOSS_LEVELS.includes(level)) {
+        if (!boss && frame > 1200) {
+            boss = new Boss();
+            bossActive = true;
+            sfx(200, 'square', 0.3, 0.04);
+            for(let i=0;i<2;i++) zombies.push(new Zombie(Math.floor(Math.random()*allowed.length)));
+        }
+        if (bossActive && frame % 500 === 0) {
+            zombies.push(new Zombie(Math.floor(Math.random()*allowed.length)));
+            zombies.push(new Zombie(Math.floor(Math.random()*allowed.length)));
+        }
+    } else {
+        // spawnStart más amable: mayor para minijuego, razonable para resto
+        let spawnStart = miniGameLevel5 ? 1400 : Math.max(900, 900 + (level * 60));
+        if(frame > spawnStart && frame < limit) {
+            let freq = frame > (limit/2) ? 300 : (miniGameLevel5 ? 700 : 450);
+            if(frame % Math.max(120, freq - (level * 6)) === 0) {
+                let r = allowed[Math.floor(Math.random()*allowed.length)];
+                zombies.push(new Zombie(r));
+            }
+        }
+    }
+
+    // balas
+    bullets.forEach((b, i) => {
+        b.x += 8; 
+        ctx.fillStyle = "#9f3"; 
+        ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 7); ctx.fill();
+        zombies.forEach((z, zi) => {
+            if(b.gy === z.gy && b.x > z.x && b.x < z.x+cellSize) {
+                z.hp -= 20; bullets.splice(i,1); sfx(400, 'sine', 0.05);
+                if(z.hp <= 0) { zombies.splice(zi,1); suns += 5; }
+            }
+        });
+        if(b.x > canvas.width) bullets.splice(i,1);
+    });
+
+    // plantas
+    plants.forEach((p,i)=>{
+        p.t++;
+        if(p.id === 'sunflower' && p.t % 600 === 0) {
+            sunsOnFloor.push({x:p.x+20, y:p.y+20, ty:p.y+40});
+            sfx(600, 'sine', 0.1, 0.02);
+        }
+        if((p.id.includes('pea') || p.id.includes('p')) && p.t % 120 === 0) {
+            if(zombies.some(z => z.gy === p.gy && z.x > p.x)) {
+                bullets.push({x:p.x+40, y:p.y+cellSize/2.2, gy:p.gy});
+                sfx(300, 'sine', 0.1, 0.03);
+                if(p.id === 'repeater') setTimeout(()=>bullets.push({x:p.x+40, y:p.y+cellSize/2.2, gy:p.gy}), 150);
+            }
+        }
+        ctx.font = `${cellSize*0.6}px Arial`;
+        ctx.textAlign = "center";
+        ctx.fillText(p.icon, p.x + cellSize/2, p.y + cellSize/1.4);
+        if(p.hp <= 0) plants.splice(i,1);
+    });
+
+    // zombies normales
+    zombies.forEach((z, zi) => { 
+        z.update(); 
+        z.draw();
+        if(z.hp <= 0) { zombies.splice(zi,1); suns += 5; }
+    });
+
+    // boss
+    if(boss) {
+        boss.update();
+        boss.draw();
+        if(boss.hp <= 0) {
+            boss = null;
+            bossActive = false;
+            suns += 200;
+            sfx(1000, 'sine', 0.6, 0.04);
+            for(let i=0;i<3;i++) zombies.push(new Zombie(Math.floor(Math.random()*5)));
+        }
+    }
+
+    sunsOnFloor.forEach(s => { 
+        if(s.y < s.ty) s.y += 2.5; 
+        ctx.font = "30px Arial"; 
+        ctx.fillText('☀️', s.x, s.y); 
+    });
+
+    document.getElementById('sun-val').innerText = suns;
+    document.getElementById('lvl-val').innerText = "NIVEL " + level;
+    document.getElementById('bar').style.width = Math.min(100, (frame/limit)*100) + '%';
+
+    // victoria (boss debe estar muerto si aplica)
+    let bossCleared = !BOSS_LEVELS.includes(level) || (BOSS_LEVELS.includes(level) && !boss);
+    if(frame > limit && zombies.length === 0 && bossCleared) {
+        active = false;
+        level++;
+        localStorage.setItem('pvz_100_lvl', level);
+        if (level < 10) {
+            chosenSeeds = ALL_PLANTS.slice(0, Math.min(level + 1, 6));
+        } else {
+            chosenSeeds = [];
+        }
+        const btnLvlEl2 = document.getElementById('btn-lvl');
+        if (btnLvlEl2) btnLvlEl2.innerText = level;
+        alert("¡NIVEL " + (level-1) + " COMPLETADO!");
+        location.reload();
+    }
+
+    frame++;
+    requestAnimationFrame(loop);
+}
+
+</script>
+</body>
+</html>
